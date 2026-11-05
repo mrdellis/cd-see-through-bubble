@@ -4,7 +4,7 @@ A ReShade add-on that cuts a soft, dithered hole through whatever is between the
 
 It's built on [RenoDX](https://github.com/clshortfuse/renodx). This repo only has the add-on source plus one small patch for RenoDX. There are no game files or dumped shaders in here. The add-on patches the game's shaders in memory as they load, using the compiler that ships with the game.
 
-Last tested on game version 1.0.0.3527 with ReShade 6.8.0 on an RTX 4080. I haven't tried it on AMD yet.
+Last tested on game version 2.04.06 with ReShade 6.8.0. It works on both NVIDIA (RTX 4080) and AMD (RX 9070 XT).
 
 ## What you need
 
