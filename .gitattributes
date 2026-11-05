@@ -1,0 +1,2 @@
+# Keep the patch byte for byte so git apply works on every checkout
+*.patch -text

@@ -1,0 +1,17 @@
+# RenoDX gets cloned here, see README.md
+external/
+
+# Build output
+build/
+*.addon64
+*.pdb
+
+# Never commit game data
+*.cso
+*.dxil
+*.dxbc
+*.rdc
+
+*.log
+.vs/
+.vscode/

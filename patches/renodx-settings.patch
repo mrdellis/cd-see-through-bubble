@@ -1,0 +1,172 @@
+diff --git a/src/utils/settings.hpp b/src/utils/settings.hpp
+index 84ecccc9..efa02ac7 100644
+--- a/src/utils/settings.hpp
++++ b/src/utils/settings.hpp
+@@ -92,6 +92,59 @@ enum class SettingValueType : uint8_t {
+   INPUT_TEXT = 9,
+ };
+ 
++// Optional storage override: when set, settings are read from / written to it
++// instead of ReShade.ini (e.g. an add-on's own ini file). Values are strings.
++static std::function<bool(const std::string& section, const std::string& key, std::string& value)> config_reader = nullptr;
++static std::function<void(const std::string& section, const std::string& key, const std::string& value)> config_writer = nullptr;
++
++namespace internal_config {
++template <typename T>
++inline bool Get(const std::string& section, const std::string& key, T& value) {
++  if (config_reader == nullptr) return reshade::get_config_value(nullptr, section.c_str(), key.c_str(), value);
++  std::string text;
++  if (!config_reader(section, key, text) || text.empty()) return false;
++  char* end = nullptr;
++  if constexpr (std::is_floating_point_v<T>) {
++    value = static_cast<T>(std::strtod(text.c_str(), &end));
++  } else {
++    value = static_cast<T>(std::strtol(text.c_str(), &end, 10));
++  }
++  return end != text.c_str();
++}
++
++inline bool GetString(const std::string& section, const std::string& key, std::string& value) {
++  if (config_reader != nullptr) return config_reader(section, key, value);
++  size_t size = 0;
++  if (!reshade::get_config_value(nullptr, section.c_str(), key.c_str(), nullptr, &size) || size == 0) return false;
++  std::vector<char> temp(size + 1, '\0');
++  if (!reshade::get_config_value(nullptr, section.c_str(), key.c_str(), temp.data(), &size)) return false;
++  temp.back() = '\0';
++  value = temp.data();
++  return true;
++}
++
++template <typename T>
++inline void Set(const std::string& section, const std::string& key, const T& value) {
++  if (config_writer == nullptr) {
++    if constexpr (std::is_same_v<T, std::string>) {
++      reshade::set_config_value(nullptr, section.c_str(), key.c_str(), value.c_str());
++    } else {
++      reshade::set_config_value(nullptr, section.c_str(), key.c_str(), value);
++    }
++    return;
++  }
++  if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, const char*>) {
++    config_writer(section, key, std::string(value));
++  } else if constexpr (std::is_floating_point_v<T>) {
++    char text[64];
++    snprintf(text, sizeof(text), "%.6g", static_cast<double>(value));
++    config_writer(section, key, text);
++  } else {
++    config_writer(section, key, std::to_string(value));
++  }
++}
++}  // namespace internal_config
++
+ struct Setting {
+   std::string key;
+   float* binding = nullptr;
+@@ -248,7 +301,7 @@ struct Setting {
+   Setting* ReadFromConfig(const std::string& config_section) {
+     switch (this->value_type) {
+       case SettingValueType::FLOAT:
+-        if (!reshade::get_config_value(nullptr, config_section.c_str(), this->key.c_str(), this->value)) {
++        if (!internal_config::Get(config_section, this->key, this->value)) {
+           this->value = this->default_value;
+         }
+         if (this->value > this->GetMax()) {
+@@ -259,7 +312,7 @@ struct Setting {
+         break;
+       case SettingValueType::BOOLEAN:
+       case SettingValueType::INTEGER:
+-        if (!reshade::get_config_value(nullptr, config_section.c_str(), this->key.c_str(), this->value_as_int)) {
++        if (!internal_config::Get(config_section, this->key, this->value_as_int)) {
+           this->value_as_int = static_cast<int>(this->default_value);
+         }
+         if (this->value_as_int > this->GetMax()) {
+@@ -268,23 +321,11 @@ struct Setting {
+           this->value_as_int = static_cast<int>(this->min);
+         }
+         break;
+-      case SettingValueType::INPUT_TEXT: {
+-        size_t size = 0;
+-        if (!reshade::get_config_value(nullptr, config_section.c_str(), this->key.c_str(), nullptr, &size)
+-            || size == 0) {
++      case SettingValueType::INPUT_TEXT:
++        if (!internal_config::GetString(config_section, this->key, this->value_as_string) || this->value_as_string.empty()) {
+           this->value_as_string = this->default_text;
+-          break;
+         }
+-
+-        std::vector<char> temp(size + 1, '\0');
+-        if (!reshade::get_config_value(nullptr, config_section.c_str(), this->key.c_str(), temp.data(), &size)) {
+-          this->value_as_string = this->default_text;
+-          break;
+-        }
+-        temp.back() = '\0';
+-        this->value_as_string = temp.data();
+         break;
+-      }
+       default:
+         break;
+     }
+@@ -294,14 +335,14 @@ struct Setting {
+   Setting* WriteToConfig(const std::string& config_section) {
+     switch (this->value_type) {
+       case SettingValueType::FLOAT:
+-        reshade::set_config_value(nullptr, config_section.c_str(), this->key.c_str(), this->value);
++        internal_config::Set(config_section, this->key, this->value);
+         break;
+       case SettingValueType::INTEGER:
+       case SettingValueType::BOOLEAN:
+-        reshade::set_config_value(nullptr, config_section.c_str(), this->key.c_str(), this->value_as_int);
++        internal_config::Set(config_section, this->key, this->value_as_int);
+         break;
+       case SettingValueType::INPUT_TEXT:
+-        reshade::set_config_value(nullptr, config_section.c_str(), this->key.c_str(), this->GetTextValue().c_str());
++        internal_config::Set(config_section, this->key, std::string(this->GetTextValue()));
+         break;
+       default:
+         break;
+@@ -469,10 +510,8 @@ static void SaveGlobalSettings() {
+ }
+ 
+ static std::string ReadGlobalString(const std::string& key) {
+-  char temp[256] = "";
+-  size_t size = 256;
+-  if (reshade::get_config_value(nullptr, global_name.c_str(), key.c_str(), temp, &size)) {
+-    std::string temp_string = std::string(temp);
++  std::string temp_string;
++  if (internal_config::GetString(global_name, key, temp_string)) {
+     auto pos = temp_string.find_last_not_of("\t\n\v\f\r ");
+     if (pos != std::string_view::npos) {
+       temp_string = {temp_string.data(), temp_string.data() + pos + 1};
+@@ -483,7 +522,7 @@ static std::string ReadGlobalString(const std::string& key) {
+ }
+ 
+ static void WriteGlobalString(const std::string& key, const std::string& value) {
+-  reshade::set_config_value(nullptr, global_name.c_str(), key.c_str(), value.c_str());
++  internal_config::Set(global_name, key, value);
+ }
+ 
+ static bool IsPresetOff() {
+@@ -709,15 +748,20 @@ static void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
+                   std::span<const std::string>(setting->labels).first(2),
+                   is_multiline);
+             }
++          } else if (setting->labels.empty()) {
++            // Compact checkbox instead of a full-width 0..1 slider.
++            bool checked = setting->value_as_int != 0;
++            if (ImGui::Checkbox(setting->label.c_str(), &checked)) {
++              setting->value_as_int = checked ? 1 : 0;
++              changed = true;
++            }
+           } else {
+             changed |= ImGui::SliderInt(
+                 setting->label.c_str(),
+                 &setting->value_as_int,
+                 0,
+                 1,
+-                setting->labels.empty()
+-                    ? ((setting->value_as_int == 0) ? "Off" : "On")  // NOLINT(readability-avoid-nested-conditional-operator)
+-                    : setting->labels.at(setting->value_as_int).c_str(),
++                setting->labels.at(setting->value_as_int).c_str(),
+                 slider_flags | ImGuiSliderFlags_NoInput);
+           }
+           break;

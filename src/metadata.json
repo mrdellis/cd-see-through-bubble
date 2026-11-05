@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../renodx-metadata-schema.json",
+  "id": "seethroughbubble",
+  "title": "Crimson Desert: See-Through Bubble",
+  "status": "experimental",
+  "summary": "Dithered occlusion cutout around the player character.",
+  "deploy": {
+    "game_exe": "CrimsonDesert.exe",
+    "process_name": "CrimsonDesert.exe",
+    "api": "d3d12",
+    "architecture": ["x64"],
+    "reshade_preferred_name": "dxgi.dll"
+  }
+}
